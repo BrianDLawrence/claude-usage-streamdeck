@@ -8,7 +8,7 @@
     "build": "rollup -c",
     "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart com.speroautem.claude-usage\""
   },
-  "author": "Your Name",
+  "author": "Spero Autem LLC",
   "license": "MIT",
   "dependencies": {
     "@elgato/streamdeck": "^1.0.0"
