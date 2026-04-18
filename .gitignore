@@ -1,6 +1,8 @@
 node_modules/
 bin/
 com.speroautem.claude-usage.sdPlugin/bin/
+release/
+*.streamDeckPlugin
 *.log
 .DS_Store
 .vscode/

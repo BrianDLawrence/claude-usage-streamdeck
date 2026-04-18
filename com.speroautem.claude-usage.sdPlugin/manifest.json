@@ -1,42 +1,38 @@
 {
   "Name": "Claude Usage",
-  "Version": "0.1.0.0",
+  "Version": "0.2.0.0",
   "Author": "Spero Autem LLC",
+  "URL": "https://github.com/BrianDLawrence/claude-usage-streamdeck",
   "Actions": [
     {
       "Name": "Claude Usage",
       "UUID": "com.speroautem.claude-usage.display",
       "Icon": "imgs/actions/usage/icon",
-      "Tooltip": "Displays your Claude.ai session and weekly usage.",
+      "Tooltip": "Shows your Claude.ai session (5-hour) and weekly usage on a Stream Deck key.",
       "Controllers": ["Keypad"],
       "States": [
         {
           "Image": "imgs/actions/usage/key",
           "TitleAlignment": "middle",
-          "FontSize": "12"
+          "FontSize": "11"
         }
       ],
-      "PropertyInspectorPath": "ui/claude-usage.html"
+      "PropertyInspectorPath": "ui/claude-usage.html",
+      "SupportedInMultiActions": false
     }
   ],
   "Category": "Claude Usage",
   "CategoryIcon": "imgs/plugin/category-icon",
   "CodePath": "bin/plugin.js",
-  "Description": "Shows your current Claude.ai session and weekly usage on a Stream Deck key. Unofficial — uses an internal endpoint, may break at any time.",
+  "Description": "Free, unofficial plugin that shows your Claude.ai session (5-hour) and weekly usage on a Stream Deck key. Paste your session key once, then pick what to display per button: session, week, or both. Data is pulled from the same internal endpoint used by the official Claude.ai usage page.",
   "Icon": "imgs/plugin/marketplace",
   "SDKVersion": 2,
   "Software": {
     "MinimumVersion": "6.5"
   },
   "OS": [
-    {
-      "Platform": "mac",
-      "MinimumVersion": "10.15"
-    },
-    {
-      "Platform": "windows",
-      "MinimumVersion": "10"
-    }
+    { "Platform": "mac", "MinimumVersion": "10.15" },
+    { "Platform": "windows", "MinimumVersion": "10" }
   ],
   "Nodejs": {
     "Version": "20",

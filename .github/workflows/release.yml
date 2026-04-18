@@ -1,0 +1,62 @@
+name: Release .streamDeckPlugin
+
+# Triggered when you push a tag like v0.2.0. The workflow:
+#  1. builds the plugin bundle
+#  2. runs `streamdeck pack` to produce com.speroautem.claude-usage.streamDeckPlugin
+#  3. attaches that file to a GitHub Release
+#
+# Users then download the single .streamDeckPlugin file and double-click to install
+# — no Node, no npm, no CLI required.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Elgato CLI
+        run: npm install -g @elgato/cli
+
+      - name: Build plugin bundle
+        run: npm run build
+
+      - name: Pack .streamDeckPlugin
+        run: |
+          mkdir -p release
+          streamdeck pack com.speroautem.claude-usage.sdPlugin --output release --force
+
+      - name: Verify artifact exists
+        run: ls -la release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.streamDeckPlugin
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            1. Download `com.speroautem.claude-usage.streamDeckPlugin` below.
+            2. Double-click the file — Stream Deck will install and enable the plugin automatically.
+            3. Drag the **Claude Usage** action onto a key, then paste your claude.ai session key into the Property Inspector.
+
+            See the [README](https://github.com/BrianDLawrence/claude-usage-streamdeck#readme) for how to find your session key.

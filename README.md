@@ -1,147 +1,193 @@
 # Claude Usage — Stream Deck Plugin
 
-A Stream Deck plugin that displays your **Claude.ai** session (5-hour) and weekly usage percentages on a Stream Deck key.
+Free, unofficial Stream Deck plugin that shows your **Claude.ai** session (5-hour) and weekly usage on a Stream Deck key. Paste your session key once, pick what to display per button, and you're done.
 
 ```
-┌─────────────┐
-│   Claude    │
-│   S 42%     │
-│   W 68%     │
-└─────────────┘
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Claude    │     │   Session   │     │    Week     │
+│  S  42%     │     │    42%      │     │    68%      │
+│  W  68%     │     │             │     │             │
+└─────────────┘     └─────────────┘     └─────────────┘
+   both mode         session only         week only
 ```
 
-> ⚠️ **Unofficial.** Anthropic does not publish a public API for Claude.ai subscription usage. This plugin calls an **internal** endpoint using your browser session cookie. It may break at any time — when it does, you'll need to re-discover the endpoint and update the parsing. Use at your own risk.
-
-> 🔐 **Your cookie is sensitive.** The Cookie header you paste into this plugin grants full access to your Claude.ai account. Treat it like a password: don't commit it, don't paste it into issues, and redact it from logs before sharing.
+> ⚠️ **Unofficial.** Anthropic does not publish a public API for Claude.ai subscription usage. This plugin calls the same internal endpoint the [Claude.ai usage page](https://claude.ai/settings/usage) uses, authenticated with your browser session key. It may break at any time.
+>
+> 🔐 **Treat your session key like a password.** It grants full access to your Claude.ai account. It's stored by Stream Deck locally on your machine — not in this repo, not on our servers (there are no servers). Don't share it.
 
 ---
 
 ## Contents
 
-- [Prerequisites](#prerequisites)
-- [Install & use](#install--use)
-- [Develop on it](#develop-on-it)
-- [How it works](#how-it-works)
-- [Security](#security)
-- [Gotchas](#gotchas)
-- [Logs](#logs)
+- [Install in 3 clicks](#install-in-3-clicks)
+- [How to get your session key](#how-to-get-your-session-key)
+- [Configuring each button](#configuring-each-button)
+- [Uninstall / rotate / troubleshoot](#uninstall--rotate--troubleshoot)
+- [What this plugin sends and stores](#what-this-plugin-sends-and-stores)
+- [Build it yourself](#build-it-yourself)
 - [Contributing](#contributing)
 - [License](#license)
 
 ---
 
-## Prerequisites
+## Install in 3 clicks
 
-- **Node.js 24+** — use [nvm](https://github.com/nvm-sh/nvm) or [nvm-windows](https://github.com/coreybutler/nvm-windows)
-- **Stream Deck 7.1+** installed
-- **Stream Deck CLI**: `npm install -g @elgato/cli`
-- A logged-in Claude.ai browser session (to extract the cookie + endpoint)
+No Node, no npm, no CLI.
+
+1. **Download** the latest `com.speroautem.claude-usage.streamDeckPlugin` from the [Releases page](https://github.com/BrianDLawrence/claude-usage-streamdeck/releases/latest).
+2. **Double-click** the downloaded file. Stream Deck will install it and ask you to enable it — say yes.
+3. **Drag** the **Claude Usage** action from the right-hand action list onto any Stream Deck key.
+
+The key will show `Add session key` until you paste yours in. Open the key's Property Inspector (the settings panel) and continue to the next section.
+
+> **Stream Deck 6.5+** is required. Mac 10.15+ or Windows 10+.
 
 ---
 
-## Install & use
+## How to get your session key
 
-### 1. Clone and build
+Your session key is a cookie named `sessionKey` in your logged-in Claude.ai browser session. It looks like `sk-ant-sid01-…` and is roughly 100–200 characters long.
+
+### Chrome / Edge / Brave / Arc
+
+1. Go to **https://claude.ai** and make sure you're logged in.
+2. Open DevTools: **View → Developer → Developer Tools** (Mac: `⌥⌘I`, Windows: `F12`).
+3. Switch to the **Application** tab.
+4. In the left sidebar, expand **Storage → Cookies → https://claude.ai**.
+5. Find the row named **`sessionKey`**. Double-click the **Value** column and copy the whole string (it starts with `sk-ant-sid01-`).
+
+### Firefox
+
+1. Go to **https://claude.ai** logged in.
+2. Open DevTools (`⌥⌘I` / `F12`).
+3. Switch to the **Storage** tab.
+4. Expand **Cookies → https://claude.ai**.
+5. Find **`sessionKey`**, copy the Value.
+
+### Safari
+
+1. Enable the Develop menu: **Safari → Settings → Advanced → Show features for web developers**.
+2. Go to **https://claude.ai**, then **Develop → Show Web Inspector**.
+3. **Storage → Cookies → claude.ai**.
+4. Copy the **Value** for `sessionKey`.
+
+Now back in Stream Deck:
+
+1. Paste the session key into the **Session key** field in the Property Inspector.
+2. Click **Test connection**.
+3. If it's valid, you'll see a green "Connected" status and your organization name. That's it — every Claude Usage button on this machine now uses this key.
+
+> **Pasting the whole Cookie header by accident?** That's fine. The plugin auto-extracts `sessionKey=…` from a full cookie string, so you can paste `sessionKey=sk-ant-sid01-…; __cf_bm=…` and it still works.
+
+---
+
+## Configuring each button
+
+You only paste the session key once. Each individual button then has two per-key settings:
+
+- **Display** — `Both` (session + week bars), `Session only`, or `Week only`.
+- **Label** — optional text drawn above the gauge (e.g. "Claude" or a project name).
+
+You can put multiple Claude Usage buttons on the same profile — one for session, one for week, one that shows both. They all share the single session key.
+
+The button refreshes every **5 minutes** by default. Press the key to force a refresh. You can change the interval (1–30 min) in the Property Inspector.
+
+Colors on the gauge:
+
+- 🟢 Green — under 75%
+- 🟡 Yellow — 75% or more
+- 🟠 Orange — 90% or more
+- 🔴 Red — 95% or more
+
+---
+
+## Uninstall / rotate / troubleshoot
+
+**Uninstall** — right-click the plugin in Stream Deck's action list and choose **Uninstall**.
+
+**Rotate the session key** — open any Claude Usage button's Property Inspector, click **Clear saved key**, paste the new one, Test connection. The new key applies to every button.
+
+**Button shows `Session expired`** — your `sessionKey` cookie expired. Log in to claude.ai again, grab the new `sessionKey` value, paste it in. Session keys typically last days to weeks.
+
+**Button shows `Error`** — open Stream Deck logs and look for a `com.speroautem.claude-usage.*.log` file:
+
+- **macOS**: `~/Library/Logs/ElgatoStreamDeck/`
+- **Windows**: `%APPDATA%\Elgato\StreamDeck\logs\`
+
+Before sharing a log, **redact any line containing `sessionKey` or `Cookie:`** — those contain your credential.
+
+**`Rate-limited`** — you're polling too fast. Set the interval to 5 minutes or more.
+
+---
+
+## What this plugin sends and stores
+
+This plugin makes HTTP requests only to **`https://claude.ai/api/...`**. There are no third-party servers, no telemetry, no analytics. Specifically:
+
+- `GET https://claude.ai/api/organizations` — to find your organization ID on first run.
+- `GET https://claude.ai/api/organizations/{id}/usage` — every poll interval.
+
+Both requests include a `Cookie: sessionKey=…` header with the value you pasted in. This is exactly what your browser does when you visit the Claude.ai usage page.
+
+**Stored on your machine, by the Stream Deck SDK's own settings store:**
+
+- Your session key (global).
+- The organization ID the first successful call returned (global, cached so subsequent polls skip the /organizations lookup).
+- Each button's display mode and label.
+
+Nothing is stored in this repo or transmitted anywhere else.
+
+---
+
+## Build it yourself
+
+If you'd rather build from source than download a release — or you want to hack on it — you'll need:
+
+- **Node.js 20.5.1+**
+- **Stream Deck 6.5+**
+- **Stream Deck CLI**: `npm install -g @elgato/cli`
 
 ```bash
 git clone https://github.com/BrianDLawrence/claude-usage-streamdeck.git
 cd claude-usage-streamdeck
 npm install
 npm run build
-```
-
-### 2. Find the real endpoint and cookie
-
-The parsing code in [src/actions/claude-usage.ts](src/actions/claude-usage.ts) contains **placeholder field paths** that you must verify against the actual response on your account.
-
-1. Open Chrome (logged into claude.ai)
-2. Open DevTools → **Network** tab → filter **Fetch/XHR**
-3. Navigate to `https://claude.ai/settings/usage`
-4. Look for a JSON response containing your session/weekly numbers (something under `api.claude.ai/api/...`)
-5. Right-click that request → **Copy → Copy as cURL**
-6. Note:
-   - The **URL** (this is your `endpoint`)
-   - The full `Cookie:` header value (this is your `sessionCookie`)
-   - The **JSON shape** of the response — if the field paths in `fetchUsage()` don't match, update them
-
-### 3. Link the plugin into Stream Deck
-
-```bash
 streamdeck link com.speroautem.claude-usage.sdPlugin
 ```
 
-### 4. Configure the button
-
-Drag the **Claude Usage** action onto a Stream Deck key. Open the Property Inspector and paste:
-
-- **Endpoint URL** — from step 2
-- **Cookie** — the full Cookie header value from step 2
-- **Poll interval** — how often to refresh (default: 5 min)
-
----
-
-## Develop on it
+Stream Deck will restart and load the plugin in developer mode. To iterate:
 
 ```bash
 npm run watch
 ```
 
-`watch` runs Rollup in watch mode and auto-restarts the Stream Deck daemon on every rebuild. The plugin reloads with your changes without a manual restart.
+This rebuilds on save and restarts the plugin automatically.
 
-For a walkthrough of the architecture, fragile points, and file layout, see [CLAUDE.md](CLAUDE.md).
+To produce your own `.streamDeckPlugin` installable:
 
----
+```bash
+npm run pack
+```
 
-## How it works
+The output lands in `release/com.speroautem.claude-usage.streamDeckPlugin` — double-click it to install.
 
-- **On `willAppear`** — starts a poll timer (default 5 min) that fetches usage and updates the key title.
-- **On `keyDown`** — triggers an immediate refresh.
-- **On `willDisappear`** — clears the timer to avoid leaks.
-- **Global settings** — cookie + endpoint are stored once and shared across every button instance, so you don't re-enter them per key.
-- **Placeholder icons** — the orange "C" tiles in `imgs/`. Replace with real artwork when ready; rerun `python generate_icons.py` to regenerate defaults (requires Pillow).
-
----
-
-## Security
-
-Your Claude.ai session cookie is the only credential in this plugin, and it grants full access to your account.
-
-- **Never commit it.** The Cookie field is stored by the Stream Deck SDK in its own settings store, outside this repo. Keep it that way.
-- **Redact logs before sharing.** Stream Deck logs contain the raw JSON response. If you attach logs to a bug report, scrub the `Cookie` line and any account-identifying values first.
-- **Don't paste cookies into issues, PRs, or Discord.** If a maintainer asks for repro steps, share the endpoint URL shape and the JSON response shape, not the cookie.
-- **Rotate if exposed.** If you suspect your cookie has leaked, log out of claude.ai in your browser — that invalidates the session.
-
----
-
-## Gotchas
-
-- **Cookie expiry** — session cookies expire in days to weeks. When the plugin starts showing `Error`, re-grab the cookie from DevTools before assuming it's a code bug.
-- **Don't hammer the endpoint** — 5 minutes is plenty. Anything under 1 minute is rude.
-- **The parsing is a guess** — the response shape is inferred from Claude Code's similar `five_hour` / `seven_day` endpoint. Claude.ai chat may return `session` / `weekly` or entirely different keys. Check `streamDeck.logger.debug` output (see [Logs](#logs)) to see the raw response, then adjust.
-- **macOS Gatekeeper** — on first launch, Stream Deck may prompt you to allow the plugin. This is expected for any unsigned plugin linked via `streamdeck link`.
-
----
-
-## Logs
-
-- **macOS**: `~/Library/Logs/ElgatoStreamDeck/`
-- **Windows**: `%APPDATA%\Elgato\StreamDeck\logs\`
-
-Look for `com.speroautem.claude-usage.*.log`.
+For architecture, fragile points, and file layout see [CLAUDE.md](CLAUDE.md).
 
 ---
 
 ## Contributing
 
-Issues and pull requests welcome.
+Issues and pull requests welcome. A few ground rules:
 
-- Read [CLAUDE.md](CLAUDE.md) first — it documents the architecture, fragile points, and conventions.
-- `npm run build` must pass before submitting a PR.
-- Don't include real cookies or logs containing them in bug reports.
-- The plugin is deliberately minimal (no tests, no lint, no CI). If you want to add tooling, open an issue to discuss scope before submitting a PR.
+- `npm run build` must pass cleanly before you submit a PR.
+- **Never** paste a real `sessionKey` value into an issue, PR, or log. If the maintainer asks for repro, share the JSON response *shape* and the HTTP status code, not the credential.
+- The plugin is deliberately minimal — no tests, no lint. Open an issue to discuss scope before adding tooling.
+- If the Claude.ai endpoint shape changes and breaks parsing, PR the fix in `src/claude/api.ts` (look at `parseUsage`).
 
 ---
 
 ## License
 
 MIT — see [LICENSE](LICENSE). Copyright © 2026 Spero Autem LLC.
+
+Not affiliated with, endorsed by, or sponsored by Anthropic. "Claude" is a trademark of Anthropic, PBC.

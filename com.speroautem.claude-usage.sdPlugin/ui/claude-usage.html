@@ -2,53 +2,244 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Claude Usage Settings</title>
+    <title>Claude Usage — Settings</title>
     <link
       rel="stylesheet"
       href="https://sdpi-components.dev/releases/v4/sdpi-components.css"
     />
     <script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+    <style>
+      .card {
+        background: var(--sdpi-bgcolor, #2d2d2d);
+        border-radius: 6px;
+        padding: 10px 12px;
+        margin: 6px 0 10px 0;
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--sdpi-color, #d8d8d8);
+      }
+      .card.ok { border-left: 3px solid #34c759; }
+      .card.err { border-left: 3px solid #ff3b30; }
+      .card.info { border-left: 3px solid #0a84ff; }
+      .step-num {
+        display: inline-block;
+        width: 18px; height: 18px; line-height: 18px;
+        border-radius: 50%; text-align: center;
+        background: #0a84ff; color: #fff;
+        font-size: 11px; font-weight: 700;
+        margin-right: 6px;
+      }
+      .muted { opacity: 0.7; }
+      .mono { font-family: ui-monospace, SF Mono, Menlo, monospace; font-size: 11px; }
+      .actions { display: flex; gap: 6px; }
+      details summary { cursor: pointer; font-weight: 600; margin: 6px 0; }
+      .hidden { display: none; }
+      a { color: #0a84ff; }
+    </style>
   </head>
   <body>
-    <sdpi-item label="Button label">
-      <sdpi-textfield setting="label" placeholder="(optional, e.g. Claude)"></sdpi-textfield>
+    <!-- Per-button display options -->
+    <sdpi-item label="Show">
+      <sdpi-select setting="display" default="both">
+        <option value="both">Session + Week (dual bar)</option>
+        <option value="session">Session only (ring)</option>
+        <option value="week">Week only (ring)</option>
+      </sdpi-select>
     </sdpi-item>
 
-    <sdpi-item label="&nbsp;">
-      <sdpi-button id="open-global">Configure Cookie & Endpoint…</sdpi-button>
-    </sdpi-item>
-
-    <!-- Global settings dialog -->
-    <sdpi-item label="Endpoint URL" global>
+    <sdpi-item label="Label">
       <sdpi-textfield
-        setting="endpoint"
-        placeholder="https://claude.ai/api/..."
+        setting="label"
+        placeholder="(optional, e.g. Claude)"
+        maxlength="16"
       ></sdpi-textfield>
     </sdpi-item>
 
-    <sdpi-item label="Cookie" global>
-      <sdpi-textarea
-        setting="sessionCookie"
-        placeholder="Paste your full Cookie header value from DevTools"
-        rows="4"
-      ></sdpi-textarea>
+    <!-- Connection card -->
+    <div class="card info" id="status-card">
+      <div id="status-empty">
+        <strong>Connect to Claude</strong>
+        <div class="muted" style="margin-top: 4px;">
+          Paste your claude.ai session key below to start tracking usage.
+        </div>
+      </div>
+      <div id="status-connected" class="hidden">
+        <strong>✓ Connected</strong>
+        <div class="muted mono" id="connected-org" style="margin-top: 4px;"></div>
+      </div>
+    </div>
+
+    <!-- Session key entry -->
+    <sdpi-item label="Session key" global>
+      <sdpi-password
+        setting="sessionKey"
+        placeholder="sk-ant-sid01-..."
+      ></sdpi-password>
     </sdpi-item>
 
-    <sdpi-item label="Poll interval (min)" global>
-      <sdpi-textfield
+    <sdpi-item label="Poll every (min)" global>
+      <sdpi-range
         setting="pollMinutes"
-        type="number"
-        placeholder="5"
-      ></sdpi-textfield>
+        default="5"
+        min="1"
+        max="30"
+        step="1"
+        showlabels
+      ></sdpi-range>
     </sdpi-item>
 
     <sdpi-item label="&nbsp;">
-      <small style="opacity: 0.7; line-height: 1.4">
-        Tip: in Chrome, open DevTools → Network → visit
-        <em>claude.ai/settings/usage</em>, find the JSON request that returns
-        your usage, right-click → Copy → Copy as cURL. Paste the URL above and
-        the entire Cookie header value in the field below.
-      </small>
+      <div class="actions">
+        <sdpi-button id="test-btn">Test connection</sdpi-button>
+        <sdpi-button id="clear-btn">Clear</sdpi-button>
+      </div>
     </sdpi-item>
+
+    <!-- Organization picker (only shown if multiple orgs) -->
+    <sdpi-item id="org-row" label="Organization" global class="hidden">
+      <sdpi-select setting="organizationId" id="org-select"></sdpi-select>
+    </sdpi-item>
+
+    <!-- Result card -->
+    <div id="result-card" class="hidden"></div>
+
+    <!-- How-to -->
+    <details>
+      <summary>How do I get my session key?</summary>
+      <div class="card">
+        <div><span class="step-num">1</span>Sign in at
+          <a href="https://claude.ai" target="_blank">claude.ai</a>.
+        </div>
+        <div style="margin-top: 6px;"><span class="step-num">2</span>Open DevTools
+          <span class="mono">(F12 or Cmd+Option+I)</span> → <strong>Application</strong> tab.
+        </div>
+        <div style="margin-top: 6px;"><span class="step-num">3</span>Expand <strong>Cookies</strong>
+          → <span class="mono">https://claude.ai</span>.
+        </div>
+        <div style="margin-top: 6px;"><span class="step-num">4</span>Find the cookie named
+          <span class="mono">sessionKey</span> and copy its value (starts with
+          <span class="mono">sk-ant-sid01-</span>).
+        </div>
+        <div style="margin-top: 6px;"><span class="step-num">5</span>Paste it above and click
+          <strong>Test connection</strong>.
+        </div>
+        <div class="muted" style="margin-top: 10px;">
+          Your session key is stored only in Stream Deck's settings on this machine —
+          never sent anywhere except claude.ai. It's equivalent to your login, so treat
+          it like a password.
+        </div>
+      </div>
+    </details>
+
+    <script>
+      // sdpi-components manages the connection. We hook into its event bus
+      // once the page is ready.
+      window.addEventListener("DOMContentLoaded", () => {
+        const SDPIComponents = window.SDPIComponents;
+
+        const testBtn = document.getElementById("test-btn");
+        const clearBtn = document.getElementById("clear-btn");
+        const resultCard = document.getElementById("result-card");
+        const statusEmpty = document.getElementById("status-empty");
+        const statusConnected = document.getElementById("status-connected");
+        const connectedOrg = document.getElementById("connected-org");
+        const orgRow = document.getElementById("org-row");
+        const orgSelect = document.getElementById("org-select");
+
+        function showResult(ok, message) {
+          resultCard.className = "card " + (ok ? "ok" : "err");
+          resultCard.textContent = message;
+          resultCard.classList.remove("hidden");
+        }
+
+        function refreshStatusFromGlobal(global) {
+          const key = global?.sessionKey;
+          const orgId = global?.organizationId;
+          if (key && orgId) {
+            statusEmpty.classList.add("hidden");
+            statusConnected.classList.remove("hidden");
+            connectedOrg.textContent = "Org: " + orgId;
+          } else {
+            statusEmpty.classList.remove("hidden");
+            statusConnected.classList.add("hidden");
+          }
+        }
+
+        // Mirror current global settings to the status card on load.
+        SDPIComponents.streamDeckClient.onDidReceiveGlobalSettings.subscribe((ev) => {
+          refreshStatusFromGlobal(ev?.payload?.settings ?? {});
+        });
+        SDPIComponents.streamDeckClient.getGlobalSettings().then((s) =>
+          refreshStatusFromGlobal(s)
+        );
+
+        // "Test connection" — ask the plugin to validate the key and list orgs.
+        testBtn.addEventListener("click", async () => {
+          resultCard.classList.add("hidden");
+          const global = await SDPIComponents.streamDeckClient.getGlobalSettings();
+          const key = (global?.sessionKey || "").trim();
+          if (!key) {
+            showResult(false, "Paste your session key first.");
+            return;
+          }
+          testBtn.setAttribute("disabled", "");
+          testBtn.textContent = "Testing…";
+          SDPIComponents.streamDeckClient.send({
+            event: "testConnection",
+            sessionKey: key,
+          });
+        });
+
+        // Plugin responds with either `{ ok: true, organizations }` or `{ ok: false, error }`.
+        SDPIComponents.streamDeckClient.onSendToPropertyInspector.subscribe((ev) => {
+          const payload = ev?.payload;
+          if (payload?.event !== "testConnection") return;
+
+          testBtn.removeAttribute("disabled");
+          testBtn.textContent = "Test connection";
+
+          if (!payload.ok) {
+            showResult(false, payload.error || "Connection failed.");
+            return;
+          }
+
+          const orgs = payload.organizations || [];
+          if (orgs.length === 1) {
+            orgRow.classList.add("hidden");
+            showResult(
+              true,
+              "Connected to " + orgs[0].name + ". You're all set — press the key to refresh anytime."
+            );
+          } else if (orgs.length > 1) {
+            // Populate the select so the user can pick.
+            orgSelect.innerHTML = orgs
+              .map((o) => `<option value="${o.uuid}">${o.name}</option>`)
+              .join("");
+            orgRow.classList.remove("hidden");
+            showResult(
+              true,
+              "Found " + orgs.length + " organizations. Pick the one you want to track below."
+            );
+          } else {
+            showResult(false, "No organizations found for this session key.");
+          }
+          // Refresh the status card to reflect any org changes the plugin made.
+          SDPIComponents.streamDeckClient.getGlobalSettings().then(refreshStatusFromGlobal);
+        });
+
+        // Clear — wipe session key + org from global settings.
+        clearBtn.addEventListener("click", async () => {
+          const current = await SDPIComponents.streamDeckClient.getGlobalSettings();
+          await SDPIComponents.streamDeckClient.setGlobalSettings({
+            ...current,
+            sessionKey: "",
+            organizationId: "",
+          });
+          resultCard.classList.add("hidden");
+          orgRow.classList.add("hidden");
+          refreshStatusFromGlobal({});
+        });
+      });
+    </script>
   </body>
 </html>

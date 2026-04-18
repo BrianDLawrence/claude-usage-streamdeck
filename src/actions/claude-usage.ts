@@ -2,41 +2,42 @@ import streamDeck, {
   action,
   DidReceiveSettingsEvent,
   KeyDownEvent,
+  SendToPluginEvent,
   SingletonAction,
   WillAppearEvent,
   WillDisappearEvent,
 } from "@elgato/streamdeck";
 
+import { fetchUsage, testSessionKey, UsageData } from "../claude/api";
+import { validateSessionKey } from "../claude/session-key";
+import { renderUsageImage } from "../render/gauge";
+
 /**
- * Per-button settings (configured via the Property Inspector).
- * Keep secrets like the session cookie in global settings instead — see below.
+ * Per-button settings.
+ * - `display` controls what the button renders (both, session-only, week-only).
+ * - `label` is an optional override label rendered above the gauge.
  */
 type ActionSettings = {
-  /** Label prefix shown above the percentages (e.g. "Claude"). Optional. */
+  display?: "both" | "session" | "week";
   label?: string;
 };
 
 /**
- * Global settings shared across all buttons using this plugin.
- * Store the session cookie + endpoint here so you only configure them once.
+ * Global settings shared across every button instance.
+ * - `sessionKey` is the value of the `sessionKey` cookie on claude.ai.
+ *   It's stored by the Stream Deck SDK in its own settings store, not this repo.
+ * - `organizationId` is cached after the first successful fetch so we skip the
+ *   /organizations round-trip on every poll.
+ * - `pollMinutes` defaults to 5.
  */
 type GlobalSettings = {
-  /** Full Cookie header value copied from your browser (includes sessionKey=...). */
-  sessionCookie?: string;
-  /** The internal JSON endpoint you identified in DevTools. */
-  endpoint?: string;
-  /** Poll interval in minutes. Defaults to 5. */
+  sessionKey?: string;
+  organizationId?: string;
   pollMinutes?: number;
 };
 
-type UsageData = {
-  sessionPct: number;
-  weeklyPct: number;
-  sessionResetsAt?: string;
-  weeklyResetsAt?: string;
-};
-
 const DEFAULT_POLL_MINUTES = 5;
+const MIN_POLL_MINUTES = 1;
 
 @action({ UUID: "com.speroautem.claude-usage.display" })
 export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
@@ -48,12 +49,17 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
 
   override async onWillAppear(ev: WillAppearEvent<ActionSettings>): Promise<void> {
     await this.refresh(ev.action.id, ev);
+
     const global = await streamDeck.settings.getGlobalSettings<GlobalSettings>();
-    const intervalMs = (global.pollMinutes ?? DEFAULT_POLL_MINUTES) * 60 * 1000;
+    const minutes = Math.max(
+      MIN_POLL_MINUTES,
+      Number(global.pollMinutes) || DEFAULT_POLL_MINUTES,
+    );
+    const intervalMs = minutes * 60 * 1000;
 
     const timer = setInterval(() => {
       this.refresh(ev.action.id, ev).catch((err) =>
-        streamDeck.logger.error("Poll failed", err)
+        streamDeck.logger.error("Poll failed", err),
       );
     }, intervalMs);
 
@@ -67,97 +73,120 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
     this.lastUsage.delete(ev.action.id);
   }
 
-  /** A key press triggers an immediate refresh — handy for on-demand updates. */
+  /** Pressing the key forces an immediate refresh — handy for on-demand updates. */
   override async onKeyDown(ev: KeyDownEvent<ActionSettings>): Promise<void> {
     await this.refresh(ev.action.id, ev);
   }
 
-  /** Per-action settings changed (e.g. label tweak) — just re-render. */
+  /** Re-render when the user tweaks the label or display mode. */
   override async onDidReceiveSettings(
-    ev: DidReceiveSettingsEvent<ActionSettings>
+    ev: DidReceiveSettingsEvent<ActionSettings>,
   ): Promise<void> {
     const cached = this.lastUsage.get(ev.action.id);
     if (cached) {
-      await this.renderTitle(ev, cached);
+      await this.render(ev, cached);
+    }
+  }
+
+  /**
+   * Property Inspector "Test connection" button.
+   * We receive a `{ event: "testConnection", sessionKey }` payload, try to list
+   * organizations, and send back the list (or an error) for the UI to display.
+   */
+  override async onSendToPlugin(
+    ev: SendToPluginEvent<any, ActionSettings>,
+  ): Promise<void> {
+    const payload = ev.payload as { event?: string; sessionKey?: string };
+
+    if (payload?.event !== "testConnection") {
+      return;
+    }
+
+    try {
+      const validated = validateSessionKey(payload.sessionKey ?? "");
+      const organizations = await testSessionKey(validated);
+
+      // Persist globally so every button on every Stream Deck profile picks it up.
+      const existing =
+        await streamDeck.settings.getGlobalSettings<GlobalSettings>();
+      await streamDeck.settings.setGlobalSettings({
+        ...existing,
+        sessionKey: validated,
+        // Auto-select the first org (matches the mature macOS app's default).
+        organizationId: organizations[0]?.uuid ?? existing.organizationId,
+      });
+
+      await streamDeck.ui.current?.sendToPropertyInspector({
+        event: "testConnection",
+        ok: true,
+        organizations,
+      });
+    } catch (err) {
+      streamDeck.logger.error("Test connection failed", err);
+      await streamDeck.ui.current?.sendToPropertyInspector({
+        event: "testConnection",
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
   private async refresh(
     instanceId: string,
-    ev: WillAppearEvent<ActionSettings> | KeyDownEvent<ActionSettings>
+    ev: WillAppearEvent<ActionSettings> | KeyDownEvent<ActionSettings>,
   ): Promise<void> {
     const global = await streamDeck.settings.getGlobalSettings<GlobalSettings>();
-    const { sessionCookie, endpoint } = global;
 
-    if (!sessionCookie || !endpoint) {
-      await ev.action.setTitle("Not\nconfigured");
+    if (!global.sessionKey) {
+      await ev.action.setTitle("Add\nsession\nkey");
+      await ev.action.setImage(undefined);
       return;
     }
 
     try {
-      const data = await this.fetchUsage(endpoint, sessionCookie);
-      this.lastUsage.set(instanceId, data);
-      await this.renderTitle(ev, data);
+      const { usage, organizationId } = await fetchUsage({
+        sessionKey: global.sessionKey,
+        organizationId: global.organizationId,
+      });
+
+      // Cache the org ID for subsequent polls.
+      if (organizationId !== global.organizationId) {
+        await streamDeck.settings.setGlobalSettings({
+          ...global,
+          organizationId,
+        });
+      }
+
+      this.lastUsage.set(instanceId, usage);
+      await this.render(ev, usage);
     } catch (err) {
       streamDeck.logger.error("Failed to fetch usage", err);
-      await ev.action.setTitle("Error");
+
+      const message = err instanceof Error ? err.message : "Error";
+      const short = message.toLowerCase().includes("unauthor")
+        ? "Session\nexpired"
+        : "Error";
+
+      await ev.action.setTitle(short);
+      await ev.action.setImage(undefined);
     }
   }
 
-  private async renderTitle(
+  private async render(
     ev:
       | WillAppearEvent<ActionSettings>
       | KeyDownEvent<ActionSettings>
       | DidReceiveSettingsEvent<ActionSettings>,
-    data: UsageData
+    data: UsageData,
   ): Promise<void> {
-    const label = ev.payload.settings.label?.trim();
-    const header = label ? `${label}\n` : "";
-    const title = `${header}S ${data.sessionPct}%\nW ${data.weeklyPct}%`;
-    await ev.action.setTitle(title);
-  }
+    const settings = ev.payload.settings;
+    const display = settings.display ?? "both";
+    const label = settings.label?.trim() || undefined;
 
-  /**
-   * Fetch usage from the internal JSON endpoint.
-   *
-   * !!! IMPORTANT !!!
-   * The field paths below (`json.session?.utilization`, etc.) are GUESSES.
-   * You MUST inspect the real response in Chrome DevTools (Network tab,
-   * visit claude.ai/settings/usage) and adjust the parsing to match.
-   */
-  private async fetchUsage(endpoint: string, cookie: string): Promise<UsageData> {
-    const res = await fetch(endpoint, {
-      headers: {
-        Cookie: cookie,
-        Accept: "application/json",
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
-    });
+    const svg = renderUsageImage({ data, display, label });
+    await ev.action.setImage(`data:image/svg+xml;base64,${svg}`);
 
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status} from ${endpoint}`);
-    }
-
-    const json: any = await res.json();
-    streamDeck.logger.debug("Usage response:", JSON.stringify(json));
-
-    // --- PLACEHOLDER PARSING — edit to match your actual response shape ---
-    const sessionPct = Math.round(
-      json?.session?.utilization ?? json?.five_hour?.utilization ?? 0
-    );
-    const weeklyPct = Math.round(
-      json?.weekly?.utilization ?? json?.seven_day?.utilization ?? 0
-    );
-
-    return {
-      sessionPct,
-      weeklyPct,
-      sessionResetsAt:
-        json?.session?.resets_at ?? json?.five_hour?.resets_at,
-      weeklyResetsAt:
-        json?.weekly?.resets_at ?? json?.seven_day?.resets_at,
-    };
+    // Clear the fallback title so the custom icon is the source of truth.
+    await ev.action.setTitle("");
   }
 }
