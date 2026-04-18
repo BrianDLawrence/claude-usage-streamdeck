@@ -93,17 +93,91 @@ export async function listOrganizations(sessionKey: string): Promise<Organizatio
 
 /**
  * Read-only test used by the "Test connection" button in the Property Inspector.
- * Returns the list of organizations the key can see — doesn't persist anything.
+ * Returns the list of organizations the key can see plus the UUID of the one
+ * we'd auto-pick as the subscription-bearing org.
+ *
+ * Doesn't persist anything — the caller (the action's `onSendToPlugin`) is
+ * responsible for saving the selection to global settings.
  */
-export async function testSessionKey(sessionKey: string): Promise<Organization[]> {
-  return listOrganizations(sessionKey);
+export async function testSessionKey(
+  sessionKey: string,
+): Promise<{ organizations: Organization[]; recommendedOrgId: string }> {
+  const organizations = await listOrganizations(sessionKey);
+  const { orgId } = await pickSubscriptionOrg(sessionKey, organizations);
+  return { organizations, recommendedOrgId: orgId };
+}
+
+/**
+ * Given a list of organizations and a working session key, probe each one's
+ * /usage endpoint in parallel and return the UUID of the one that is actually
+ * bearing a Claude subscription.
+ *
+ * Scoring heuristic (in priority order):
+ *   1. `seven_day.resets_at` is a non-null string — the API only sets this on
+ *      the org that actually tracks the 7-day window.
+ *   2. `extra_usage` is an object (not `null`) — only populated on billed orgs.
+ *   3. Any non-zero utilization anywhere in the response.
+ *   4. Falls back to the first org in the list.
+ *
+ * We need this because /organizations can return the user's auto-created
+ * personal org *first*, with the billed org sitting behind it. Picking
+ * `orgs[0]` silently shows 0% for users in that situation.
+ */
+async function pickSubscriptionOrg(
+  sessionKey: string,
+  orgs: Organization[],
+): Promise<{ orgId: string; probes: { org: Organization; json: any }[] }> {
+  if (orgs.length === 1) {
+    return { orgId: orgs[0].uuid, probes: [] };
+  }
+
+  const probes = await Promise.all(
+    orgs.map(async (org) => {
+      try {
+        const json = await call<any>(
+          `${BASE_URL}/organizations/${encodeURIComponent(org.uuid)}/usage`,
+          sessionKey,
+        );
+        return { org, json };
+      } catch (err) {
+        streamDeck.logger.warn(
+          `Probe failed for org ${org.name} (${org.uuid}): ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return { org, json: null };
+      }
+    }),
+  );
+
+  const scored = probes.map(({ org, json }) => {
+    let score = 0;
+    if (typeof json?.seven_day?.resets_at === "string") score += 100;
+    if (json?.extra_usage && typeof json.extra_usage === "object") score += 10;
+    const sessionUtil = Number(json?.five_hour?.utilization) || 0;
+    const weekUtil = Number(json?.seven_day?.utilization) || 0;
+    if (sessionUtil > 0 || weekUtil > 0) score += 5;
+    return { org, json, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  const winner = scored[0];
+
+  streamDeck.logger.info(
+    `Scored ${scored.length} orgs: ${scored
+      .map((s) => `${s.org.name}=${s.score}`)
+      .join(", ")}`,
+  );
+  streamDeck.logger.info(
+    `Auto-selected subscription org: ${winner.org.name} (${winner.org.uuid})`,
+  );
+
+  return { orgId: winner.org.uuid, probes };
 }
 
 /**
  * Fetch session + weekly usage.
  *
  * Uses a cached organization ID when provided; otherwise discovers one via
- * `/organizations` (picking the first, matching the macOS app's default).
+ * `/organizations` and auto-selects the org that actually has a subscription.
  */
 export async function fetchUsage(
   opts: FetchOpts,
@@ -113,8 +187,8 @@ export async function fetchUsage(
   let orgId = opts.organizationId;
   if (!orgId) {
     const orgs = await listOrganizations(sessionKey);
-    orgId = orgs[0].uuid;
-    streamDeck.logger.info(`Auto-selected organization ${orgs[0].name} (${orgId})`);
+    const picked = await pickSubscriptionOrg(sessionKey, orgs);
+    orgId = picked.orgId;
   }
 
   const url = `${BASE_URL}/organizations/${encodeURIComponent(orgId)}/usage`;

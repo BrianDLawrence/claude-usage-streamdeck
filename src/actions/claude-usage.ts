@@ -1,6 +1,7 @@
 import streamDeck, {
   action,
   DidReceiveSettingsEvent,
+  KeyAction,
   KeyDownEvent,
   SendToPluginEvent,
   SingletonAction,
@@ -48,7 +49,12 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
   private lastUsage = new Map<string, UsageData>();
 
   override async onWillAppear(ev: WillAppearEvent<ActionSettings>): Promise<void> {
-    await this.refresh(ev.action.id, ev);
+    // Dials can't render our custom icon, and the manifest is Keypad-only, so
+    // we simply skip any non-key action that somehow gets here.
+    if (!ev.action.isKey()) return;
+    const keyAction = ev.action;
+
+    await this.refreshAction(keyAction, ev.payload.settings);
 
     const global = await streamDeck.settings.getGlobalSettings<GlobalSettings>();
     const minutes = Math.max(
@@ -58,12 +64,12 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
     const intervalMs = minutes * 60 * 1000;
 
     const timer = setInterval(() => {
-      this.refresh(ev.action.id, ev).catch((err) =>
+      this.refreshAction(keyAction).catch((err) =>
         streamDeck.logger.error("Poll failed", err),
       );
     }, intervalMs);
 
-    this.pollTimers.set(ev.action.id, timer);
+    this.pollTimers.set(keyAction.id, timer);
   }
 
   override onWillDisappear(ev: WillDisappearEvent<ActionSettings>): void {
@@ -75,17 +81,40 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
 
   /** Pressing the key forces an immediate refresh — handy for on-demand updates. */
   override async onKeyDown(ev: KeyDownEvent<ActionSettings>): Promise<void> {
-    await this.refresh(ev.action.id, ev);
+    await this.refreshAction(ev.action, ev.payload.settings);
   }
 
   /** Re-render when the user tweaks the label or display mode. */
   override async onDidReceiveSettings(
     ev: DidReceiveSettingsEvent<ActionSettings>,
   ): Promise<void> {
+    if (!ev.action.isKey()) return;
     const cached = this.lastUsage.get(ev.action.id);
     if (cached) {
-      await this.render(ev, cached);
+      await this.render(ev.action, ev.payload.settings, cached);
     }
+  }
+
+  /**
+   * Force-refresh every visible instance of this action.
+   * Called right after Test connection succeeds so the Stream Deck key flips
+   * from its "Add session key" placeholder to the live gauge within a second,
+   * instead of waiting up to `pollMinutes` for the next scheduled poll.
+   */
+  private async refreshAllVisibleActions(): Promise<void> {
+    // Keypad-only manifest → every visible action is a KeyAction at runtime.
+    // `isKey()` narrows the union type so setTitle/setImage are available.
+    const all = Array.from(this.actions).filter(
+      (a): a is KeyAction<ActionSettings> => a.isKey(),
+    );
+    streamDeck.logger.info(`Force-refreshing ${all.length} visible action(s).`);
+    await Promise.all(
+      all.map((a) =>
+        this.refreshAction(a).catch((err) =>
+          streamDeck.logger.error("Forced refresh failed", err),
+        ),
+      ),
+    );
   }
 
   /**
@@ -113,24 +142,38 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
     try {
       const validated = validateSessionKey(payload.sessionKey ?? "");
       streamDeck.logger.info("Session key validated. Listing organizations…");
-      const organizations = await testSessionKey(validated);
-      streamDeck.logger.info(`Found ${organizations.length} organization(s).`);
+      const { organizations, recommendedOrgId } =
+        await testSessionKey(validated);
+      streamDeck.logger.info(
+        `Found ${organizations.length} organization(s). Recommended: ${recommendedOrgId}`,
+      );
 
       // Persist globally so every button on every Stream Deck profile picks it up.
+      // Auto-select the subscription-bearing org (not necessarily the first one
+      // — for multi-org accounts, orgs[0] is often the user's empty personal org).
       const existing =
         await streamDeck.settings.getGlobalSettings<GlobalSettings>();
       await streamDeck.settings.setGlobalSettings({
         ...existing,
         sessionKey: validated,
-        // Auto-select the first org (matches the mature macOS app's default).
-        organizationId: organizations[0]?.uuid ?? existing.organizationId,
+        organizationId: recommendedOrgId ?? existing.organizationId,
       });
 
+      // Immediate confirmation back to the PI — don't wait for the forced
+      // refresh below, which may take a beat on slow connections.
       await (pi as any)?.sendToPropertyInspector({
         event: "testConnection",
         ok: true,
         organizations,
+        recommendedOrgId,
       });
+
+      // Force-refresh every visible action instance so the Stream Deck key
+      // itself reflects the live numbers within ~1s, instead of waiting for
+      // the next scheduled poll (up to `pollMinutes` away).
+      this.refreshAllVisibleActions().catch((err) =>
+        streamDeck.logger.error("Post-connect refresh failed", err),
+      );
     } catch (err) {
       streamDeck.logger.error("Test connection failed", err);
       await (pi as any)?.sendToPropertyInspector({
@@ -141,15 +184,21 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
     }
   }
 
-  private async refresh(
-    instanceId: string,
-    ev: WillAppearEvent<ActionSettings> | KeyDownEvent<ActionSettings>,
+  /**
+   * Fetch the latest usage and render it onto the given action.
+   * If `settings` is omitted we fetch it from the SDK — that's what the forced
+   * refresh path (post-Test-connection) uses, because we don't have an event
+   * object to hand us the current per-action settings.
+   */
+  private async refreshAction(
+    actionInstance: KeyAction<ActionSettings>,
+    settings?: ActionSettings,
   ): Promise<void> {
     const global = await streamDeck.settings.getGlobalSettings<GlobalSettings>();
 
     if (!global.sessionKey) {
-      await ev.action.setTitle("Add\nsession\nkey");
-      await ev.action.setImage(undefined);
+      await actionInstance.setTitle("Add\nsession\nkey");
+      await actionInstance.setImage(undefined);
       return;
     }
 
@@ -167,8 +216,11 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
         });
       }
 
-      this.lastUsage.set(instanceId, usage);
-      await this.render(ev, usage);
+      this.lastUsage.set(actionInstance.id, usage);
+
+      const effectiveSettings =
+        settings ?? (await actionInstance.getSettings<ActionSettings>());
+      await this.render(actionInstance, effectiveSettings, usage);
     } catch (err) {
       streamDeck.logger.error("Failed to fetch usage", err);
 
@@ -177,26 +229,23 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
         ? "Session\nexpired"
         : "Error";
 
-      await ev.action.setTitle(short);
-      await ev.action.setImage(undefined);
+      await actionInstance.setTitle(short);
+      await actionInstance.setImage(undefined);
     }
   }
 
   private async render(
-    ev:
-      | WillAppearEvent<ActionSettings>
-      | KeyDownEvent<ActionSettings>
-      | DidReceiveSettingsEvent<ActionSettings>,
+    actionInstance: KeyAction<ActionSettings>,
+    settings: ActionSettings,
     data: UsageData,
   ): Promise<void> {
-    const settings = ev.payload.settings;
     const display = settings.display ?? "both";
     const label = settings.label?.trim() || undefined;
 
     const svg = renderUsageImage({ data, display, label });
-    await ev.action.setImage(`data:image/svg+xml;base64,${svg}`);
+    await actionInstance.setImage(`data:image/svg+xml;base64,${svg}`);
 
     // Clear the fallback title so the custom icon is the source of truth.
-    await ev.action.setTitle("");
+    await actionInstance.setTitle("");
   }
 }

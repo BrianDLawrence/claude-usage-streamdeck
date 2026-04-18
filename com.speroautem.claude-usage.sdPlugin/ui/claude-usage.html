@@ -242,24 +242,37 @@
           }
 
           const orgs = payload.organizations || [];
-          if (orgs.length === 1) {
-            orgRow.classList.add("hidden");
-            showResult(
-              true,
-              "Connected to " + orgs[0].name + ". You're all set — press the key to refresh anytime."
-            );
-          } else if (orgs.length > 1) {
-            // Populate the select so the user can pick.
+          const recommendedOrgId = payload.recommendedOrgId;
+          const recommendedOrg =
+            orgs.find((o) => o.uuid === recommendedOrgId) || orgs[0];
+
+          if (orgs.length === 0) {
+            showResult(false, "No organizations found for this session key.");
+          } else {
+            // Always populate + show the picker so the user can see which org
+            // we auto-selected and override it if we picked the wrong one.
             orgSelect.innerHTML = orgs
-              .map((o) => `<option value="${o.uuid}">${o.name}</option>`)
+              .map((o) => {
+                const label =
+                  o.uuid === recommendedOrgId
+                    ? o.name + " (recommended)"
+                    : o.name;
+                return `<option value="${o.uuid}">${label}</option>`;
+              })
               .join("");
             orgRow.classList.remove("hidden");
-            showResult(
-              true,
-              "Found " + orgs.length + " organizations. Pick the one you want to track below."
-            );
-          } else {
-            showResult(false, "No organizations found for this session key.");
+
+            if (orgs.length === 1) {
+              showResult(
+                true,
+                "✓ Connected to " + recommendedOrg.name + ". Your key is updating now — press it anytime to refresh."
+              );
+            } else {
+              showResult(
+                true,
+                "✓ Connected. Tracking " + recommendedOrg.name + " out of " + orgs.length + " organizations — change below if that's wrong. Your key is updating now."
+              );
+            }
           }
           // Refresh the status card to reflect any org changes the plugin made.
           SDPIComponents.streamDeckClient.getGlobalSettings().then(refreshStatusFromGlobal);

@@ -1,6 +1,6 @@
 {
   "name": "com.speroautem.claude-usage",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "description": "Stream Deck plugin that displays Claude.ai session and weekly usage",
   "main": "bin/plugin.js",
   "type": "module",
