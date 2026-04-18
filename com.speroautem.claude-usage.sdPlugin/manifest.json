@@ -14,7 +14,7 @@
         {
           "Image": "imgs/actions/usage/key",
           "TitleAlignment": "middle",
-          "FontSize": "11"
+          "FontSize": 11
         }
       ],
       "PropertyInspectorPath": "ui/claude-usage.html",
