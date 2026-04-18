@@ -35,6 +35,21 @@
       details summary { cursor: pointer; font-weight: 600; margin: 6px 0; }
       .hidden { display: none; }
       a { color: #0a84ff; }
+      .btn {
+        appearance: none;
+        -webkit-appearance: none;
+        border: 1px solid #4a4a4a;
+        background: linear-gradient(#3d3d3d, #2b2b2b);
+        color: #fff;
+        padding: 6px 12px;
+        font-size: 12px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .btn:hover { background: linear-gradient(#4a4a4a, #343434); }
+      .btn:active { background: #2b2b2b; }
+      .btn:disabled { opacity: 0.6; cursor: default; }
+      .btn.primary { border-color: #0a84ff; }
     </style>
   </head>
   <body>
@@ -70,16 +85,18 @@
     </div>
 
     <!-- Session key entry -->
-    <sdpi-item label="Session key" global>
+    <sdpi-item label="Session key">
       <sdpi-password
         setting="sessionKey"
+        global
         placeholder="sk-ant-sid01-..."
       ></sdpi-password>
     </sdpi-item>
 
-    <sdpi-item label="Poll every (min)" global>
+    <sdpi-item label="Poll every (min)">
       <sdpi-range
         setting="pollMinutes"
+        global
         default="5"
         min="1"
         max="30"
@@ -90,14 +107,14 @@
 
     <sdpi-item label="&nbsp;">
       <div class="actions">
-        <sdpi-button id="test-btn">Test connection</sdpi-button>
-        <sdpi-button id="clear-btn">Clear</sdpi-button>
+        <button type="button" class="btn primary" id="test-btn">Test connection</button>
+        <button type="button" class="btn" id="clear-btn">Clear</button>
       </div>
     </sdpi-item>
 
     <!-- Organization picker (only shown if multiple orgs) -->
-    <sdpi-item id="org-row" label="Organization" global class="hidden">
-      <sdpi-select setting="organizationId" id="org-select"></sdpi-select>
+    <sdpi-item id="org-row" label="Organization" class="hidden">
+      <sdpi-select setting="organizationId" id="org-select" global></sdpi-select>
     </sdpi-item>
 
     <!-- Result card -->
@@ -132,10 +149,23 @@
     </details>
 
     <script>
-      // sdpi-components manages the connection. We hook into its event bus
-      // once the page is ready.
-      window.addEventListener("DOMContentLoaded", () => {
+      // sdpi-components manages the connection. We wait for the library to
+      // define its custom elements before wiring up handlers, otherwise the
+      // first click can fire before the components are upgraded.
+      async function ready() {
+        if (window.SDPIComponents) return;
+        await new Promise((r) => window.addEventListener("DOMContentLoaded", r, { once: true }));
+      }
+
+      ready().then(async () => {
         const SDPIComponents = window.SDPIComponents;
+        if (!SDPIComponents) {
+          document.body.insertAdjacentHTML(
+            "afterbegin",
+            '<div class="card err">Property Inspector framework failed to load. Check your internet connection — the Stream Deck PI needs online access on first paint.</div>'
+          );
+          return;
+        }
 
         const testBtn = document.getElementById("test-btn");
         const clearBtn = document.getElementById("clear-btn");
@@ -175,19 +205,27 @@
 
         // "Test connection" — ask the plugin to validate the key and list orgs.
         testBtn.addEventListener("click", async () => {
-          resultCard.classList.add("hidden");
-          const global = await SDPIComponents.streamDeckClient.getGlobalSettings();
-          const key = (global?.sessionKey || "").trim();
-          if (!key) {
-            showResult(false, "Paste your session key first.");
-            return;
+          try {
+            // Show that the click registered, immediately — even before any async work.
+            showResult(true, "Click received. Reading saved session key…");
+            const global = await SDPIComponents.streamDeckClient.getGlobalSettings();
+            const key = (global?.sessionKey || "").trim();
+            if (!key) {
+              showResult(false, "Paste your session key first, then click Test connection again.");
+              return;
+            }
+            testBtn.disabled = true;
+            testBtn.textContent = "Testing…";
+            showResult(true, "Contacting claude.ai…");
+            SDPIComponents.streamDeckClient.send({
+              event: "testConnection",
+              sessionKey: key,
+            });
+          } catch (err) {
+            showResult(false, "PI error: " + (err?.message || String(err)));
+            testBtn.disabled = false;
+            testBtn.textContent = "Test connection";
           }
-          testBtn.setAttribute("disabled", "");
-          testBtn.textContent = "Testing…";
-          SDPIComponents.streamDeckClient.send({
-            event: "testConnection",
-            sessionKey: key,
-          });
         });
 
         // Plugin responds with either `{ ok: true, organizations }` or `{ ok: false, error }`.
@@ -195,7 +233,7 @@
           const payload = ev?.payload;
           if (payload?.event !== "testConnection") return;
 
-          testBtn.removeAttribute("disabled");
+          testBtn.disabled = false;
           testBtn.textContent = "Test connection";
 
           if (!payload.ok) {

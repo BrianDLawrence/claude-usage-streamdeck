@@ -97,14 +97,24 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
     ev: SendToPluginEvent<any, ActionSettings>,
   ): Promise<void> {
     const payload = ev.payload as { event?: string; sessionKey?: string };
+    streamDeck.logger.info(
+      `onSendToPlugin: event=${payload?.event ?? "<none>"} keyLen=${payload?.sessionKey?.length ?? 0}`,
+    );
 
     if (payload?.event !== "testConnection") {
       return;
     }
 
+    // Prefer replying to the exact PI that sent this event; fall back to ui.current.
+    const pi = (ev.action as any).sendToPropertyInspector
+      ? ev.action
+      : streamDeck.ui.current;
+
     try {
       const validated = validateSessionKey(payload.sessionKey ?? "");
+      streamDeck.logger.info("Session key validated. Listing organizations…");
       const organizations = await testSessionKey(validated);
+      streamDeck.logger.info(`Found ${organizations.length} organization(s).`);
 
       // Persist globally so every button on every Stream Deck profile picks it up.
       const existing =
@@ -116,14 +126,14 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
         organizationId: organizations[0]?.uuid ?? existing.organizationId,
       });
 
-      await streamDeck.ui.current?.sendToPropertyInspector({
+      await (pi as any)?.sendToPropertyInspector({
         event: "testConnection",
         ok: true,
         organizations,
       });
     } catch (err) {
       streamDeck.logger.error("Test connection failed", err);
-      await streamDeck.ui.current?.sendToPropertyInspector({
+      await (pi as any)?.sendToPropertyInspector({
         event: "testConnection",
         ok: false,
         error: err instanceof Error ? err.message : String(err),
