@@ -120,21 +120,35 @@ export async function fetchUsage(
   const url = `${BASE_URL}/organizations/${encodeURIComponent(orgId)}/usage`;
   const json = await call<any>(url, sessionKey);
 
-  // Don't log the whole response in production; it contains account identifiers.
-  streamDeck.logger.debug(
-    `Usage response keys: ${Object.keys(json ?? {}).join(", ")}`,
+  // v0.2.2: Log the raw response once per poll so we can diagnose shape drift.
+  // This is INFO-level on purpose (debug is filtered out by default) and is
+  // worth the slightly noisy log while we stabilize the parser against
+  // real-world account responses.
+  try {
+    streamDeck.logger.info(
+      `Usage response (raw): ${JSON.stringify(json)}`,
+    );
+  } catch {
+    streamDeck.logger.info(
+      `Usage response keys: ${Object.keys(json ?? {}).join(", ")}`,
+    );
+  }
+
+  const usage = parseUsage(json);
+  streamDeck.logger.info(
+    `Parsed usage → session=${usage.sessionPct}% week=${usage.weeklyPct}% opus=${usage.weeklyOpusPct}% sonnet=${usage.weeklySonnetPct}%`,
   );
 
   return {
     organizationId: orgId,
-    usage: parseUsage(json),
+    usage,
   };
 }
 
 /**
  * Parse Claude's subscription-usage JSON.
  *
- * Shape (as of April 2026, from the macOS app):
+ * Historical shape (from the mature macOS app, up through early 2026):
  *   {
  *     "five_hour":       { "utilization": 42, "resets_at": "..." },
  *     "seven_day":       { "utilization": 68, "resets_at": "..." },
@@ -142,37 +156,111 @@ export async function fetchUsage(
  *     "seven_day_sonnet":{ "utilization": 40, "resets_at": "..." }
  *   }
  *
- * `utilization` may be an Int, Double, or numeric String. We coerce all three.
+ * In practice we've seen responses where the block keys are slightly different
+ * (e.g. `fiveHour` / `sevenDay`), where the percentage field is named
+ * `percentage_used` / `pct` / `used` / `value` instead of `utilization`, and
+ * where the value is a 0-1 float rather than a 0-100 integer. We try every
+ * combination we've observed — if all fail we log what we saw and return 0.
  */
 function parseUsage(json: any): UsageData {
+  const sessionBlock = pickBlock(json, [
+    "five_hour",
+    "fiveHour",
+    "five_hour_window",
+    "session",
+    "current_session",
+  ]);
+  const weekBlock = pickBlock(json, [
+    "seven_day",
+    "sevenDay",
+    "seven_day_window",
+    "week",
+    "weekly",
+  ]);
+  const opusBlock = pickBlock(json, [
+    "seven_day_opus",
+    "sevenDayOpus",
+    "opus",
+    "weekly_opus",
+  ]);
+  const sonnetBlock = pickBlock(json, [
+    "seven_day_sonnet",
+    "sevenDaySonnet",
+    "sonnet",
+    "weekly_sonnet",
+  ]);
+
   return {
-    sessionPct: readUtilization(json?.five_hour),
-    weeklyPct: readUtilization(json?.seven_day),
-    weeklyOpusPct: readUtilization(json?.seven_day_opus),
-    weeklySonnetPct: readUtilization(json?.seven_day_sonnet),
-    sessionResetsAt: readResetsAt(json?.five_hour),
-    weeklyResetsAt: readResetsAt(json?.seven_day),
+    sessionPct: readUtilization(sessionBlock),
+    weeklyPct: readUtilization(weekBlock),
+    weeklyOpusPct: readUtilization(opusBlock),
+    weeklySonnetPct: readUtilization(sonnetBlock),
+    sessionResetsAt: readResetsAt(sessionBlock),
+    weeklyResetsAt: readResetsAt(weekBlock),
   };
 }
 
+/** Return the first nested object that exists under any of the given keys. */
+function pickBlock(json: any, keys: string[]): any {
+  if (!json || typeof json !== "object") return undefined;
+  for (const k of keys) {
+    if (json[k] != null) return json[k];
+  }
+  return undefined;
+}
+
+/**
+ * Read a percentage out of a block, trying several common field names.
+ * Values between 0 and 1 are treated as 0-1 floats and multiplied by 100.
+ */
 function readUtilization(block: any): number {
   if (block == null) return 0;
 
-  const raw = block.utilization;
-  if (typeof raw === "number" && Number.isFinite(raw)) {
-    return clampPct(raw);
-  }
-  if (typeof raw === "string") {
-    const cleaned = raw.replace("%", "").trim();
-    const parsed = Number(cleaned);
-    if (Number.isFinite(parsed)) return clampPct(parsed);
+  // A block might itself be a raw number (e.g. `"five_hour": 0.42`).
+  const candidates: any[] = [
+    typeof block === "number" || typeof block === "string" ? block : undefined,
+    block.utilization,
+    block.percentage_used,
+    block.percentageUsed,
+    block.percent_used,
+    block.percentUsed,
+    block.pct,
+    block.used,
+    block.value,
+    block.usage,
+    block.usage_percent,
+    block.usagePercent,
+  ];
+
+  for (const raw of candidates) {
+    const parsed = coercePct(raw);
+    if (parsed != null) return parsed;
   }
   return 0;
 }
 
+/** Coerce an Int/Double/numeric-string into a 0-100 integer. `null` on failure. */
+function coercePct(raw: any): number | null {
+  if (raw == null) return null;
+  let n: number;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    n = raw;
+  } else if (typeof raw === "string") {
+    const cleaned = raw.replace("%", "").trim();
+    const parsed = Number(cleaned);
+    if (!Number.isFinite(parsed)) return null;
+    n = parsed;
+  } else {
+    return null;
+  }
+  // Treat small values as 0-1 fractions (e.g. 0.42 → 42%).
+  if (n > 0 && n <= 1) n = n * 100;
+  return clampPct(n);
+}
+
 function readResetsAt(block: any): string | undefined {
-  if (block == null) return undefined;
-  const raw = block.resets_at;
+  if (block == null || typeof block !== "object") return undefined;
+  const raw = block.resets_at ?? block.resetsAt ?? block.reset_at ?? block.resetAt;
   return typeof raw === "string" ? raw : undefined;
 }
 
