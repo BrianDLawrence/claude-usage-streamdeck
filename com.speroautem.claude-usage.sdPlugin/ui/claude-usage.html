@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Claude Usage Settings</title>
+    <link
+      rel="stylesheet"
+      href="https://sdpi-components.dev/releases/v4/sdpi-components.css"
+    />
+    <script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+  </head>
+  <body>
+    <sdpi-item label="Button label">
+      <sdpi-textfield setting="label" placeholder="(optional, e.g. Claude)"></sdpi-textfield>
+    </sdpi-item>
+
+    <sdpi-item label="&nbsp;">
+      <sdpi-button id="open-global">Configure Cookie & Endpoint…</sdpi-button>
+    </sdpi-item>
+
+    <!-- Global settings dialog -->
+    <sdpi-item label="Endpoint URL" global>
+      <sdpi-textfield
+        setting="endpoint"
+        placeholder="https://claude.ai/api/..."
+      ></sdpi-textfield>
+    </sdpi-item>
+
+    <sdpi-item label="Cookie" global>
+      <sdpi-textarea
+        setting="sessionCookie"
+        placeholder="Paste your full Cookie header value from DevTools"
+        rows="4"
+      ></sdpi-textarea>
+    </sdpi-item>
+
+    <sdpi-item label="Poll interval (min)" global>
+      <sdpi-textfield
+        setting="pollMinutes"
+        type="number"
+        placeholder="5"
+      ></sdpi-textfield>
+    </sdpi-item>
+
+    <sdpi-item label="&nbsp;">
+      <small style="opacity: 0.7; line-height: 1.4">
+        Tip: in Chrome, open DevTools → Network → visit
+        <em>claude.ai/settings/usage</em>, find the JSON request that returns
+        your usage, right-click → Copy → Copy as cURL. Paste the URL above and
+        the entire Cookie header value in the field below.
+      </small>
+    </sdpi-item>
+  </body>
+</html>

@@ -1,0 +1,46 @@
+{
+  "Name": "Claude Usage",
+  "Version": "0.1.0.0",
+  "Author": "Your Name",
+  "Actions": [
+    {
+      "Name": "Claude Usage",
+      "UUID": "com.speroautem.claude-usage.display",
+      "Icon": "imgs/actions/usage/icon",
+      "Tooltip": "Displays your Claude.ai session and weekly usage.",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "imgs/actions/usage/key",
+          "TitleAlignment": "middle",
+          "FontSize": "12"
+        }
+      ],
+      "PropertyInspectorPath": "ui/claude-usage.html"
+    }
+  ],
+  "Category": "Claude Usage",
+  "CategoryIcon": "imgs/plugin/category-icon",
+  "CodePath": "bin/plugin.js",
+  "Description": "Shows your current Claude.ai session and weekly usage on a Stream Deck key. Unofficial — uses an internal endpoint, may break at any time.",
+  "Icon": "imgs/plugin/marketplace",
+  "SDKVersion": 2,
+  "Software": {
+    "MinimumVersion": "6.5"
+  },
+  "OS": [
+    {
+      "Platform": "mac",
+      "MinimumVersion": "10.15"
+    },
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Nodejs": {
+    "Version": "20",
+    "Debug": "enabled"
+  },
+  "UUID": "com.speroautem.claude-usage"
+}

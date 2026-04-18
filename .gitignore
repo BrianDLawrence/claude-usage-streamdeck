@@ -1,0 +1,8 @@
+node_modules/
+bin/
+com.speroautem.claude-usage.sdPlugin/bin/
+*.log
+.DS_Store
+.vscode/
+.idea/
+*.tsbuildinfo

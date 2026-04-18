@@ -1,0 +1,27 @@
+{
+  "name": "com.speroautem.claude-usage",
+  "version": "0.1.0",
+  "description": "Stream Deck plugin that displays Claude.ai session and weekly usage",
+  "main": "bin/plugin.js",
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c",
+    "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart com.speroautem.claude-usage\""
+  },
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "@elgato/streamdeck": "^1.0.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^25.0.0",
+    "@rollup/plugin-node-resolve": "^15.0.0",
+    "@rollup/plugin-terser": "^0.4.0",
+    "@rollup/plugin-typescript": "^11.0.0",
+    "@tsconfig/node20": "^20.1.0",
+    "@types/node": "^20.0.0",
+    "rollup": "^4.0.0",
+    "tslib": "^2.6.0",
+    "typescript": "^5.0.0"
+  }
+}
