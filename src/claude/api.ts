@@ -313,7 +313,13 @@ function readUtilization(block: any): number {
   return 0;
 }
 
-/** Coerce an Int/Double/numeric-string into a 0-100 integer. `null` on failure. */
+/**
+ * Coerce an Int/Double/numeric-string into a 0-100 integer. `null` on failure.
+ *
+ * Claude returns utilization already scaled 0-100 (e.g. `24.0` means 24%,
+ * and `1` means 1%), so we DO NOT multiply small values by 100. An earlier
+ * version of this function did — it treated `1` as `100%`, which was wrong.
+ */
 function coercePct(raw: any): number | null {
   if (raw == null) return null;
   let n: number;
@@ -327,8 +333,6 @@ function coercePct(raw: any): number | null {
   } else {
     return null;
   }
-  // Treat small values as 0-1 fractions (e.g. 0.42 → 42%).
-  if (n > 0 && n <= 1) n = n * 100;
   return clampPct(n);
 }
 

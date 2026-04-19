@@ -97,20 +97,40 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
 
   /**
    * Force-refresh every visible instance of this action.
+   *
    * Called right after Test connection succeeds so the Stream Deck key flips
    * from its "Add session key" placeholder to the live gauge within a second,
    * instead of waiting up to `pollMinutes` for the next scheduled poll.
+   *
+   * Takes optional `auth` credentials so we can bypass global-settings storage.
+   * This matters because `setGlobalSettings` doesn't fully round-trip before
+   * the next `getGlobalSettings` returns — on macOS the write goes over a
+   * websocket to the SD host app and through Keychain, so a read immediately
+   * after a write can see stale (empty) data. Passing the credentials straight
+   * through avoids the race.
+   *
+   * Also folds in `preferredAction` (the action tied to the PI that triggered
+   * this) so we always refresh *something* even if `this.actions` happens to
+   * return empty (rare, but has been observed when the PI is opened before
+   * the action's own willAppear has completed).
    */
-  private async refreshAllVisibleActions(): Promise<void> {
-    // Keypad-only manifest → every visible action is a KeyAction at runtime.
-    // `isKey()` narrows the union type so setTitle/setImage are available.
-    const all = Array.from(this.actions).filter(
-      (a): a is KeyAction<ActionSettings> => a.isKey(),
+  private async refreshAllVisibleActions(
+    auth?: { sessionKey: string; organizationId?: string },
+    preferredAction?: KeyAction<ActionSettings>,
+  ): Promise<void> {
+    const all = new Set<KeyAction<ActionSettings>>();
+    for (const a of this.actions) {
+      if (a.isKey()) all.add(a);
+    }
+    if (preferredAction) all.add(preferredAction);
+
+    streamDeck.logger.info(
+      `Force-refreshing ${all.size} visible action(s) (preferred=${preferredAction?.id ?? "none"}, hasAuth=${!!auth}).`,
     );
-    streamDeck.logger.info(`Force-refreshing ${all.length} visible action(s).`);
+
     await Promise.all(
-      all.map((a) =>
-        this.refreshAction(a).catch((err) =>
+      Array.from(all).map((a) =>
+        this.refreshAction(a, undefined, auth).catch((err) =>
           streamDeck.logger.error("Forced refresh failed", err),
         ),
       ),
@@ -171,7 +191,22 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
       // Force-refresh every visible action instance so the Stream Deck key
       // itself reflects the live numbers within ~1s, instead of waiting for
       // the next scheduled poll (up to `pollMinutes` away).
-      this.refreshAllVisibleActions().catch((err) =>
+      //
+      // Pass the just-validated credentials directly — do NOT rely on the
+      // refresh re-reading them from global settings, because on macOS the
+      // setGlobalSettings write above may not have committed yet when the
+      // refresh starts (websocket + Keychain round-trip).
+      //
+      // Also surface the PI's own action explicitly so we always refresh at
+      // least that one, even in edge cases where `this.actions` hasn't yet
+      // been populated with it.
+      const preferred = ev.action.isKey()
+        ? (ev.action as KeyAction<ActionSettings>)
+        : undefined;
+      this.refreshAllVisibleActions(
+        { sessionKey: validated, organizationId: recommendedOrgId },
+        preferred,
+      ).catch((err) =>
         streamDeck.logger.error("Post-connect refresh failed", err),
       );
     } catch (err) {
@@ -186,33 +221,59 @@ export class ClaudeUsageAction extends SingletonAction<ActionSettings> {
 
   /**
    * Fetch the latest usage and render it onto the given action.
-   * If `settings` is omitted we fetch it from the SDK — that's what the forced
-   * refresh path (post-Test-connection) uses, because we don't have an event
-   * object to hand us the current per-action settings.
+   *
+   * - If `settings` is omitted we fetch it from the SDK — that's what the
+   *   forced refresh path (post-Test-connection) uses, because we don't have
+   *   an event object to hand us the current per-action settings.
+   * - If `auth` is provided, we use those credentials directly instead of
+   *   reading `getGlobalSettings()`. This avoids a setGlobalSettings →
+   *   getGlobalSettings round-trip race on macOS where the write hasn't
+   *   committed by the time we read. The Test connection flow always passes
+   *   `auth` so the forced refresh renders real numbers immediately.
    */
   private async refreshAction(
     actionInstance: KeyAction<ActionSettings>,
     settings?: ActionSettings,
+    auth?: { sessionKey: string; organizationId?: string },
   ): Promise<void> {
-    const global = await streamDeck.settings.getGlobalSettings<GlobalSettings>();
+    let sessionKey: string | undefined;
+    let organizationId: string | undefined;
+    if (auth) {
+      sessionKey = auth.sessionKey;
+      organizationId = auth.organizationId;
+      streamDeck.logger.info(
+        `refreshAction: id=${actionInstance.id} using provided auth, orgId=${organizationId ?? "<auto>"}`,
+      );
+    } else {
+      const global =
+        await streamDeck.settings.getGlobalSettings<GlobalSettings>();
+      sessionKey = global.sessionKey;
+      organizationId = global.organizationId;
+      streamDeck.logger.info(
+        `refreshAction: id=${actionInstance.id} using global settings, hasKey=${!!sessionKey} orgId=${organizationId ?? "<auto>"}`,
+      );
+    }
 
-    if (!global.sessionKey) {
+    if (!sessionKey) {
       await actionInstance.setTitle("Add\nsession\nkey");
       await actionInstance.setImage(undefined);
       return;
     }
 
     try {
-      const { usage, organizationId } = await fetchUsage({
-        sessionKey: global.sessionKey,
-        organizationId: global.organizationId,
+      const { usage, organizationId: resolvedOrgId } = await fetchUsage({
+        sessionKey,
+        organizationId,
       });
 
-      // Cache the org ID for subsequent polls.
-      if (organizationId !== global.organizationId) {
+      // Persist any newly-discovered org ID, but only when we weren't using an
+      // `auth` override — when we were, onSendToPlugin already wrote it.
+      if (!auth && resolvedOrgId !== organizationId) {
+        const global =
+          await streamDeck.settings.getGlobalSettings<GlobalSettings>();
         await streamDeck.settings.setGlobalSettings({
           ...global,
-          organizationId,
+          organizationId: resolvedOrgId,
         });
       }
 
